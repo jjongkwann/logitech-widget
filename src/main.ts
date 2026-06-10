@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 interface DeviceBattery {
   id: string;
@@ -71,6 +72,11 @@ function render(devices: DeviceBattery[]) {
   }
   app.innerHTML = devices.map(card).join("");
 }
+
+// Frameless window: drag from anywhere on the widget.
+document.addEventListener("mousedown", (e) => {
+  if (e.button === 0) getCurrentWindow().startDragging();
+});
 
 listen<DeviceBattery[]>("battery-update", (e) => render(e.payload));
 

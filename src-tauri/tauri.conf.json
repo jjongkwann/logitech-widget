@@ -15,7 +15,13 @@
       {
         "title": "Logitech Widget",
         "width": 320,
-        "height": 240
+        "height": 240,
+        "decorations": false,
+        "transparent": true,
+        "skipTaskbar": true,
+        "alwaysOnBottom": true,
+        "shadow": false,
+        "resizable": false
       }
     ],
     "security": {
