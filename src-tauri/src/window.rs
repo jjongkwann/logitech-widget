@@ -59,10 +59,11 @@ pub fn pin_to_desktop(window: &WebviewWindow) {
     use windows::Win32::UI::Accessibility::{SetWinEventHook, HWINEVENTHOOK};
     use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
     use windows::Win32::UI::WindowsAndMessaging::{
-        GetClassNameW, GetForegroundWindow, KillTimer, SetTimer, SetWindowPos,
-        SwitchToThisWindow, EVENT_SYSTEM_FOREGROUND, HWND_BOTTOM, SWP_NOACTIVATE, SWP_NOMOVE,
-        SWP_NOSIZE, SWP_NOZORDER, WINDOWPOS, WINEVENT_OUTOFCONTEXT, WM_TIMER,
-        WM_WINDOWPOSCHANGING,
+        GetClassNameW, GetForegroundWindow, GetShellWindow, GetWindow, GetWindowLongW,
+        KillTimer, SetTimer, SetWindowPos, EVENT_SYSTEM_FOREGROUND, GWL_EXSTYLE, GW_HWNDPREV,
+        HWND_BOTTOM, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER,
+        SWP_NOSENDCHANGING, SWP_NOSIZE, SWP_NOZORDER, WINDOWPOS, WINEVENT_OUTOFCONTEXT,
+        WM_TIMER, WM_WINDOWPOSCHANGING, WS_EX_TOPMOST,
     };
 
     static WIDGET: AtomicIsize = AtomicIsize::new(0);
@@ -71,10 +72,16 @@ pub fn pin_to_desktop(window: &WebviewWindow) {
     const SETTLE_TIMER: usize = 0x4C57; // "LW"
 
     fn apply_band() {
+        // Rainmeter's ZPOS_FLAGS: SWP_NOSENDCHANGING skips the whole
+        // WM_WINDOWPOSCHANGING chain (tao consumes that message), which is
+        // a key reason Rainmeter's in-process z-calls work.
+        let zpos = SWP_NOMOVE | SWP_NOSIZE | SWP_NOOWNERZORDER | SWP_NOACTIVATE
+            | SWP_NOSENDCHANGING;
         let raw = WIDGET.load(Ordering::Relaxed);
         if raw == 0 {
             return;
         }
+        let widget = HWND(raw as _);
         let desktop = unsafe {
             let fg = GetForegroundWindow();
             let mut cls = [0u16; 32];
@@ -84,19 +91,28 @@ pub fn pin_to_desktop(window: &WebviewWindow) {
         };
         DESKTOP_MODE.store(desktop, Ordering::Relaxed);
         unsafe {
+            let is_topmost =
+                |h: HWND| GetWindowLongW(h, GWL_EXSTYLE) as u32 & WS_EX_TOPMOST.0 != 0;
             if desktop {
-                SwitchToThisWindow(HWND(raw as _), true);
+                // Join the topmost band so the raised desktop can't cover us.
+                let _ = SetWindowPos(widget, Some(HWND_TOPMOST), 0, 0, 0, 0, zpos);
+                if !is_topmost(widget) {
+                    // Background processes may lack the rights for the special
+                    // HWND_TOPMOST; Rainmeter's fallback is to insert after the
+                    // backmost WS_EX_TOPMOST window above the desktop.
+                    let host = GetShellWindow();
+                    let mut w = GetWindow(host, GW_HWNDPREV).unwrap_or_default();
+                    while !w.0.is_null() {
+                        if is_topmost(w) {
+                            let _ = SetWindowPos(widget, Some(w), 0, 0, 0, 0, zpos);
+                            break;
+                        }
+                        w = GetWindow(w, GW_HWNDPREV).unwrap_or_default();
+                    }
+                }
             } else {
                 // Sink back; the subclass rewrites any z-change to bottom too.
-                let _ = SetWindowPos(
-                    HWND(raw as _),
-                    Some(HWND_BOTTOM),
-                    0,
-                    0,
-                    0,
-                    0,
-                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
-                );
+                let _ = SetWindowPos(widget, Some(HWND_BOTTOM), 0, 0, 0, 0, zpos);
             }
         }
     }
