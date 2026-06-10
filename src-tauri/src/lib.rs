@@ -23,6 +23,12 @@ fn get_batteries(state: tauri::State<Snapshot>) -> Vec<DeviceBattery> {
 pub fn run() {
     let snapshot: Snapshot = Arc::new(Mutex::new(Vec::new()));
     tauri::Builder::default()
+        // Must be registered first: a second launch just reveals the running widget.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.show();
+            }
+        }))
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
