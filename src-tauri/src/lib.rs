@@ -1,5 +1,6 @@
 pub mod battery;
 mod poller;
+mod settings;
 mod tray;
 mod window;
 
@@ -22,6 +23,11 @@ fn get_batteries(state: tauri::State<Snapshot>) -> Vec<DeviceBattery> {
 pub fn run() {
     let snapshot: Snapshot = Arc::new(Mutex::new(Vec::new()));
     tauri::Builder::default()
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
+        .plugin(tauri_plugin_notification::init())
         .manage(snapshot.clone())
         .invoke_handler(tauri::generate_handler![get_batteries])
         .setup(move |app| {
@@ -30,7 +36,7 @@ pub fn run() {
             window::restore_position(handle, &main);
             window::pin_to_desktop(&main);
             tray::setup(handle)?;
-            poller::spawn(handle.clone(), snapshot);
+            poller::spawn(handle.clone(), snapshot, settings::load(handle));
             Ok(())
         })
         .on_window_event(|win, event| {
