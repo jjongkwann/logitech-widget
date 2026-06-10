@@ -5,6 +5,49 @@ use hidapi::HidApi;
 use super::proto;
 use super::transport::{self, RpcError};
 
+/// Send a LONG ping to a specific slot on every receiver and dump all raw
+/// traffic that follows — catches replies in unexpected formats.
+pub fn ping_dump(slot: u8) {
+    let api = HidApi::new().expect("hidapi init");
+    let long = proto::to_long(&proto::ping(slot, 0x5A));
+    for phys in transport::enumerate(&api) {
+        println!("== {} [{}]", phys.product, phys.key);
+        match phys.dump_traffic(&long, 2000) {
+            Ok(reports) => {
+                for r in reports {
+                    println!("   {r:02x?}");
+                }
+            }
+            Err(e) => println!("   error: {e:?}"),
+        }
+    }
+}
+
+/// Trigger a "fake device arrival" (write reg 0x02 = 0x02) on every receiver
+/// and dump all raw traffic for a few seconds. 0x41 connection notifications
+/// reveal the receiver's live view of each slot (byte4 & 0x40 = link DOWN).
+pub fn listen_arrivals() {
+    let api = HidApi::new().expect("hidapi init");
+    for phys in transport::enumerate(&api) {
+        println!("== {} [{}]", phys.product, phys.key);
+        match phys.dump_traffic(&[0x10, 0xFF, 0x80, 0x02, 0x02, 0x00, 0x00], 3000) {
+            Ok(reports) => {
+                for r in reports {
+                    let note = if r.len() >= 5 && r[2] == 0x41 {
+                        let slot = r[1];
+                        let down = r[4] & 0x40 != 0;
+                        format!("  <- 0x41 slot {slot} link {}", if down { "DOWN" } else { "UP" })
+                    } else {
+                        String::new()
+                    };
+                    println!("   {r:02x?}{note}");
+                }
+            }
+            Err(e) => println!("   error: {e:?}"),
+        }
+    }
+}
+
 pub fn probe_all() {
     let api = HidApi::new().expect("hidapi init");
     for phys in transport::enumerate(&api) {

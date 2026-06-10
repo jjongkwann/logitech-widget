@@ -6,5 +6,15 @@
 use logitech_widget_lib::battery::hidpp::diag;
 
 fn main() {
-    diag::probe_all();
+    if std::env::args().any(|a| a == "--listen") {
+        diag::listen_arrivals();
+    } else if let Some(slot) = std::env::args()
+        .skip_while(|a| a != "--ping")
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+    {
+        diag::ping_dump(slot);
+    } else {
+        diag::probe_all();
+    }
 }

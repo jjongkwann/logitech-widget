@@ -100,12 +100,49 @@ impl PhysicalDevice {
     /// devices (Bluetooth) the request is upgraded to a 20-byte report.
     /// Unrelated traffic (events, stale replies) is skipped, not treated as
     /// the answer.
+    ///
+    /// A short request that times out is retried once as a long report:
+    /// Bolt receivers are BLE-based and only forward long messages to their
+    /// paired devices (receiver-local register reads still answer short).
     pub fn rpc(&self, req: &[u8; proto::SHORT_LEN]) -> Result<Vec<u8>, RpcError> {
         match (&self.short, &self.long) {
-            (Some(s), _) => self.transact(s, &req[..]),
+            (Some(s), long) => {
+                let result = self.transact(s, &req[..]);
+                if matches!(result, Err(RpcError::Timeout)) {
+                    if let Some(l) = long {
+                        return self.transact(l, &proto::to_long(req)[..]);
+                    }
+                }
+                result
+            }
             (None, Some(l)) => self.transact(l, &proto::to_long(req)[..]),
             (None, None) => Err(RpcError::Timeout),
         }
+    }
+
+    /// Diagnostic: send a raw request and collect every report from both
+    /// channels for `window_ms`. Used by the probe examples only.
+    pub fn dump_traffic(&self, wire: &[u8], window_ms: u64) -> Result<Vec<Vec<u8>>, RpcError> {
+        // Route by wire length: long frames must go out the long collection.
+        let write_to = match (&self.short, &self.long) {
+            (Some(s), _) if wire.len() == proto::SHORT_LEN => s,
+            (_, Some(l)) => l,
+            (Some(s), None) => s,
+            (None, None) => return Err(RpcError::Timeout),
+        };
+        write_to.write(wire).map_err(RpcError::Io)?;
+        let deadline = Instant::now() + Duration::from_millis(window_ms);
+        let mut out = Vec::new();
+        let mut buf = [0u8; 64];
+        while Instant::now() < deadline {
+            for ch in [self.short.as_ref(), self.long.as_ref()].into_iter().flatten() {
+                let n = ch.read_timeout(&mut buf, READ_SLICE_MS).map_err(RpcError::Io)?;
+                if n > 0 {
+                    out.push(buf[..n].to_vec());
+                }
+            }
+        }
+        Ok(out)
     }
 
     fn transact(&self, write_to: &HidDevice, wire: &[u8]) -> Result<Vec<u8>, RpcError> {
