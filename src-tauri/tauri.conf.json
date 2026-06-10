@@ -14,8 +14,8 @@
     "windows": [
       {
         "title": "Logitech Widget",
-        "width": 800,
-        "height": 600
+        "width": 320,
+        "height": 240
       }
     ],
     "security": {
