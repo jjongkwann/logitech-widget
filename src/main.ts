@@ -35,17 +35,28 @@ function levelClass(p: number): string {
 
 function card(d: DeviceBattery): string {
   const icon = TYPE_ICONS[d.device_type] ?? "🔋";
+  const pct = d.percentage;
+  // Offline devices still show their last known level (filled in by the
+  // poller's cache) — BLE mice drop the link within seconds of idling.
   if (!d.online) {
+    const bar =
+      pct === null
+        ? ""
+        : `
+        <div class="bar">
+          <div class="fill ${levelClass(pct)}" style="width:${pct}%"></div>
+        </div>`;
     return `
       <div class="card offline">
         <span class="icon">${icon}</span>
         <div class="info">
           <div class="name">${esc(d.name)}</div>
-          <div class="state">오프라인</div>
+          ${bar}
+          <div class="state">절전 중${pct === null ? "" : " · 마지막 잔량"}</div>
         </div>
+        ${pct === null ? "" : `<span class="pct">${pct}%</span>`}
       </div>`;
   }
-  const pct = d.percentage;
   const bar =
     pct === null
       ? `<div class="state">잔량 미지원</div>`

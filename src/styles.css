@@ -40,7 +40,11 @@ body {
 }
 
 .card.offline {
-  opacity: 0.45;
+  opacity: 0.55;
+}
+
+.card.offline .state {
+  margin-top: 4px;
 }
 
 .icon {
