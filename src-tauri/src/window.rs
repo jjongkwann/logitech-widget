@@ -54,7 +54,7 @@ pub fn save_position(app: &AppHandle, pos: &PhysicalPosition<i32>) {
 ///   setups, and the window is destroyed when the shell recreates WorkerW.
 #[cfg(windows)]
 pub fn pin_to_desktop(window: &WebviewWindow) {
-    use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
+    use std::sync::atomic::{AtomicIsize, Ordering};
     use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
     use windows::Win32::UI::Accessibility::{SetWinEventHook, HWINEVENTHOOK};
     use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
@@ -67,8 +67,6 @@ pub fn pin_to_desktop(window: &WebviewWindow) {
     };
 
     static WIDGET: AtomicIsize = AtomicIsize::new(0);
-    /// True while the desktop itself is the foreground (Win+D state).
-    static DESKTOP_MODE: AtomicBool = AtomicBool::new(false);
     const SETTLE_TIMER: usize = 0x4C57; // "LW"
 
     fn apply_band() {
@@ -84,12 +82,17 @@ pub fn pin_to_desktop(window: &WebviewWindow) {
         let widget = HWND(raw as _);
         let desktop = unsafe {
             let fg = GetForegroundWindow();
+            if fg == widget {
+                // Clicking/dragging the widget makes it foreground — that
+                // must not change bands (it would sink it mid-drag while in
+                // the Win+D state).
+                return;
+            }
             let mut cls = [0u16; 32];
             let n = GetClassNameW(fg, &mut cls) as usize;
             let cls = String::from_utf16_lossy(&cls[..n]);
             cls == "Progman" || cls == "WorkerW"
         };
-        DESKTOP_MODE.store(desktop, Ordering::Relaxed);
         unsafe {
             let is_topmost =
                 |h: HWND| GetWindowLongW(h, GWL_EXSTYLE) as u32 & WS_EX_TOPMOST.0 != 0;
@@ -135,13 +138,13 @@ pub fn pin_to_desktop(window: &WebviewWindow) {
                         if !p.flags.contains(SWP_NOMOVE) && p.x == -32000 && p.y == -32000 {
                             p.flags |= SWP_NOMOVE | SWP_NOSIZE;
                         }
-                        // Hand-rolled always-on-bottom, suspended in desktop
-                        // mode so the widget can sit above the raised desktop.
-                        if !DESKTOP_MODE.load(Ordering::Relaxed)
-                            && !p.flags.contains(SWP_NOZORDER)
-                        {
-                            p.hwndInsertAfter = HWND_BOTTOM;
-                        }
+                        // Freeze the z-order against everyone else (Rainmeter
+                        // does the same for its OnDesktop skins): clicking or
+                        // activating the widget must not restack it — e.g. in
+                        // the Win+D state activation would drop it below the
+                        // raised desktop. Our own band changes in apply_band
+                        // use SWP_NOSENDCHANGING and bypass this handler.
+                        p.flags |= SWP_NOZORDER;
                     }
                 }
                 WM_TIMER if wparam.0 == SETTLE_TIMER => {
