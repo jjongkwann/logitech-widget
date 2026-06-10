@@ -1,6 +1,7 @@
 //! Primary battery source: direct HID++ communication over hidapi.
 //! Protocol details: .claude/skills/hidpp-battery/SKILL.md.
 
+pub mod diag;
 mod proto;
 mod transport;
 
@@ -38,8 +39,28 @@ impl BatterySource for HidppSource {
         for phys in transport::enumerate(&self.api) {
             poll_physical(&phys, &mut out);
         }
-        out
+        dedup_stale_pairings(out)
     }
+}
+
+/// Re-pairing a device can leave a stale extra slot on the receiver with the
+/// same codename. Collapse same-name entries on the same receiver: online
+/// entries win over offline ones, and offline duplicates collapse to one.
+fn dedup_stale_pairings(devices: Vec<DeviceBattery>) -> Vec<DeviceBattery> {
+    let receiver_of = |id: &str| id.rsplit_once(':').map(|(r, _)| r.to_string());
+    let mut out: Vec<DeviceBattery> = Vec::new();
+    for d in devices {
+        let existing = out
+            .iter()
+            .position(|e| e.name == d.name && receiver_of(&e.id) == receiver_of(&d.id));
+        match existing {
+            Some(_) if !d.online => {}                     // drop offline duplicate
+            Some(i) if !out[i].online => out[i] = d,       // online beats offline
+            Some(_) => out.push(d), // both online: two real identical devices
+            None => out.push(d),
+        }
+    }
+    out
 }
 
 /// Probe one physical device (receiver / wired / Bluetooth).
@@ -65,11 +86,17 @@ fn poll_physical(phys: &PhysicalDevice, out: &mut Vec<DeviceBattery>) {
 }
 
 fn poll_receiver_slot(phys: &PhysicalDevice, slot: u8, out: &mut Vec<DeviceBattery>) {
-    // Receiver-side codename works even when the device is asleep.
+    // Receiver-side codename works even when the device is asleep. Unifying/
+    // Lightspeed and Bolt receivers use different register layouts — try both.
     let codename = phys
         .rpc(&proto::read_codename(slot))
         .ok()
-        .and_then(|p| proto::parse_codename(&p));
+        .and_then(|p| proto::parse_codename(&p))
+        .or_else(|| {
+            phys.rpc(&proto::read_codename_bolt(slot))
+                .ok()
+                .and_then(|p| proto::parse_codename_bolt(&p))
+        });
 
     match phys.rpc(&proto::ping(slot, PING_MARKER)) {
         Ok(p) if proto::parse_pong(&p, PING_MARKER) => {
@@ -198,4 +225,47 @@ fn offline_entry(phys: &PhysicalDevice, idx: u8, codename: Option<String>) -> De
 
 fn device_id(phys: &PhysicalDevice, idx: u8) -> String {
     format!("hidpp:{}:{}", phys.key, idx)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dev(id: &str, name: &str, online: bool) -> DeviceBattery {
+        DeviceBattery {
+            id: id.to_string(),
+            name: name.to_string(),
+            device_type: "device".to_string(),
+            percentage: online.then_some(50),
+            charging: false,
+            online,
+            source: SOURCE,
+        }
+    }
+
+    #[test]
+    fn stale_pairing_slots_collapse() {
+        // Real case: MX Master 3S paired at two Bolt slots, both asleep.
+        let out = dedup_stale_pairings(vec![
+            dev("hidpp:bolt:1", "MX KEYS S", false),
+            dev("hidpp:bolt:2", "MX Master 3S", false),
+            dev("hidpp:bolt:3", "MX Master 3S", false),
+        ]);
+        assert_eq!(out.len(), 2);
+
+        // Online entry replaces the stale offline one.
+        let out = dedup_stale_pairings(vec![
+            dev("hidpp:bolt:2", "MX Master 3S", false),
+            dev("hidpp:bolt:3", "MX Master 3S", true),
+        ]);
+        assert_eq!(out.len(), 1);
+        assert!(out[0].online);
+
+        // Same name on different receivers is not a duplicate.
+        let out = dedup_stale_pairings(vec![
+            dev("hidpp:a:1", "MX Master 3S", false),
+            dev("hidpp:b:1", "MX Master 3S", false),
+        ]);
+        assert_eq!(out.len(), 2);
+    }
 }

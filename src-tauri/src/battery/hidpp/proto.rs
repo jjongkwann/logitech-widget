@@ -82,6 +82,20 @@ pub fn read_codename(idx: u8) -> [u8; SHORT_LEN] {
     read_long_register(DEV_IDX_DIRECT, REG_PAIRING_INFO, 0x40 | (idx - 1))
 }
 
+/// Bolt receivers use a different layout: reg 0xB5, p0 = 0x60 + slot, p1 = 0x01
+/// (name part 1). Solaar: InfoSubRegisters.BOLT_DEVICE_NAME, "0x6N01".
+pub fn read_codename_bolt(idx: u8) -> [u8; SHORT_LEN] {
+    [
+        REPORT_SHORT,
+        DEV_IDX_DIRECT,
+        SUB_GET_LONG_REGISTER,
+        REG_PAIRING_INFO,
+        0x60 + idx,
+        0x01,
+        0,
+    ]
+}
+
 // --- reply matching ----------------------------------------------------------
 
 #[derive(Debug, PartialEq)]
@@ -235,6 +249,17 @@ pub fn parse_codename(params: &[u8]) -> Option<String> {
     Some(String::from_utf8_lossy(&bytes[..len]).trim_end_matches('\0').to_string())
 }
 
+/// Bolt codename reply: length at p2 (capped to 14 per Solaar), name from p3.
+pub fn parse_codename_bolt(params: &[u8]) -> Option<String> {
+    let len = (params.get(2).copied()? as usize).min(14);
+    let bytes = params.get(3..)?;
+    let len = len.min(bytes.len());
+    if len == 0 {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&bytes[..len]).trim_end_matches('\0').to_string())
+}
+
 /// Feature 0x0005 function 2 (getDeviceType) → human-readable type.
 pub fn device_type_name(code: u8) -> &'static str {
     match code {
@@ -367,6 +392,18 @@ mod tests {
         assert_eq!(r.percentage, Some(50));
         let r = parse_reg_status(&[7, 0x25, 0]);
         assert!(r.charging);
+    }
+
+    #[test]
+    fn bolt_codename_parsing() {
+        // request layout: 0x6N at p0, part 0x01 at p1
+        assert_eq!(read_codename_bolt(1), [0x10, 0xFF, 0x83, 0xB5, 0x61, 0x01, 0x00]);
+        // reply: page echo, ?, len, then name
+        let mut params = vec![0x61, 0x00, 12];
+        params.extend_from_slice(b"MX Master 3S");
+        params.extend_from_slice(&[0; 4]);
+        assert_eq!(parse_codename_bolt(&params), Some("MX Master 3S".to_string()));
+        assert_eq!(parse_codename_bolt(&[0x61, 0, 0, 0]), None);
     }
 
     #[test]
