@@ -38,7 +38,7 @@ Windows 11 바탕화면에 상주하는 위젯으로, 연결된 Logitech 기기(
 └──────────────────────────────────┘
 ```
 
-공유 모델: `DeviceBattery { id, name, device_type, percentage, charging, source }`
+공유 모델: `DeviceBattery { id, name, device_type, percentage, charging, online, source }`
 소스 정책: HID++로 잡히는 기기는 HID++, 못 잡는 기기만 G HUB로 보충. 같은 기기가 양쪽에 잡히면 HID++ 우선.
 
 ## 4. 마일스톤 (각 단계 = 검증 통과 시 완료)

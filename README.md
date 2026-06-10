@@ -22,5 +22,5 @@ npm run tauri build   # 배포 빌드
 
 ## 테스트 기기
 
-<!-- 실기기 검증에 사용한 보유 기기를 여기에 기록 -->
-- (예: G Pro X Superlight — Lightspeed 리시버)
+<!-- 실기기 검증에 사용한 보유 기기 -->
+- Logitech G PRO X 2 (마우스) — Lightspeed 리시버(PID 0xC54D), HID++ 2.0 / UNIFIED_BATTERY(0x1004)
